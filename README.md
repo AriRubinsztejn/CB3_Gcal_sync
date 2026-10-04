@@ -1,4 +1,12 @@
 # CB3_Gcal_sync
+
+> **Just want the calendar?** Add the public Manhattan CB3 meeting calendar to your own calendar app:
+> - [Add to Google Calendar](https://calendar.google.com/calendar/r?cid=9e003cdd8d31e520ef1b697deef2a64ac454d2c22d744a7a152638683504fe06%40group.calendar.google.com)
+> - [View in browser](https://calendar.google.com/calendar/embed?src=9e003cdd8d31e520ef1b697deef2a64ac454d2c22d744a7a152638683504fe06%40group.calendar.google.com)
+> - iCal feed (Apple Calendar, Outlook, etc. — subscribe by URL): `https://calendar.google.com/calendar/ical/9e003cdd8d31e520ef1b697deef2a64ac454d2c22d744a7a152638683504fe06%40group.calendar.google.com/public/basic.ics`
+>
+> This is an unofficial calendar. Meetings are copied from the CB3 website, so confirm details there.
+
 Scrapes the [Manhattan CB3 meeting calendar](https://www.nyc.gov/site/manhattancb3/calendar/calendar.page) and keeps a public Google Calendar ("Manhattan CB3") in sync: new meetings are created, changed ones updated, cancelled ones removed. Past events are never touched.
 
 ## Setup
