@@ -32,10 +32,12 @@ def get_service():
             except RefreshError as e:
                 # Token revoked/expired (e.g. app still in Testing). Don't hang a scheduled run on a browser prompt.
                 token.unlink(missing_ok=True)
-                raise SystemExit(f"Google login expired ({e}). Run `py -3.13 sync_cb3.py` interactively to log in again.")
+                log.error("Google login expired (%s). Run `py -3.13 sync_cb3.py` interactively to log in again.", e)
+                raise SystemExit(1)
         else:
             if not sys.stdin.isatty():
-                raise SystemExit("No valid Google login. Run `py -3.13 sync_cb3.py` interactively to log in.")
+                log.error("No valid Google login. Run `py -3.13 sync_cb3.py` interactively to log in.")
+                raise SystemExit(1)
             creds = InstalledAppFlow.from_client_secrets_file(creds_file, SCOPES).run_local_server(port=0)
         token.write_text(creds.to_json())
     return build("calendar", "v3", credentials=creds)
