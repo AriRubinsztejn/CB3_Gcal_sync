@@ -3,10 +3,12 @@ import hashlib
 import json
 import logging
 import pathlib
+import sys
 from datetime import datetime, timezone
 from urllib.parse import quote
 
 from google.auth.transport.requests import Request
+from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
@@ -25,8 +27,15 @@ def get_service():
     creds = Credentials.from_authorized_user_file(token, SCOPES) if token.exists() else None
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except RefreshError as e:
+                # Token revoked/expired (e.g. app still in Testing). Don't hang a scheduled run on a browser prompt.
+                token.unlink(missing_ok=True)
+                raise SystemExit(f"Google login expired ({e}). Run `py -3.13 sync_cb3.py` interactively to log in again.")
         else:
+            if not sys.stdin.isatty():
+                raise SystemExit("No valid Google login. Run `py -3.13 sync_cb3.py` interactively to log in.")
             creds = InstalledAppFlow.from_client_secrets_file(creds_file, SCOPES).run_local_server(port=0)
         token.write_text(creds.to_json())
     return build("calendar", "v3", credentials=creds)
