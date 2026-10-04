@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# CB3 sync secrets / local state
+credentials.json
+token.json
+config.json
