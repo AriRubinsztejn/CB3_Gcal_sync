@@ -4,8 +4,9 @@ import json
 import logging
 import pathlib
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError
@@ -106,47 +107,80 @@ def _body(m):
     }
 
 
-def _existing_events(service, cal_id):
-    """Future events previously created by this script, keyed by cb3_key."""
-    now = datetime.now(timezone.utc).isoformat()
+def _existing_events(service, cal_id, since):
+    """Events previously created by this script from `since` onward, keyed by cb3_key.
+
+    The window starts at the earliest scraped meeting (not "now") because the CB3 page keeps listing
+    meetings that already happened; those must be matched, not re-created.
+    Each value is a list, oldest first, so duplicates can be spotted.
+    """
     found, token = {}, None
     while cal_id:
         resp = service.events().list(
-            calendarId=cal_id, timeMin=now, singleEvents=True, maxResults=250, pageToken=token
+            calendarId=cal_id, timeMin=since.isoformat(), singleEvents=True, maxResults=250, pageToken=token
         ).execute()
         for ev in resp.get("items", []):
             k = ev.get("extendedProperties", {}).get("private", {}).get("cb3_key")
             if k:
-                found[k] = ev
+                found.setdefault(k, []).append(ev)
         token = resp.get("nextPageToken")
         if not token:
             break
+    for evs in found.values():
+        evs.sort(key=lambda e: e.get("created", ""))
     return found
 
 
+def _has_ended(ev, now):
+    end = ev["end"].get("dateTime")
+    if not end:
+        return False
+    end_dt = datetime.fromisoformat(end)
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=ZoneInfo(TZ))
+    return end_dt < now
+
+
 def sync(service, cal_id, meetings, dry_run=False):
-    """Create/update/delete future events so the calendar mirrors `meetings`. Returns counts."""
-    existing = _existing_events(service, cal_id)
-    counts = {"created": 0, "updated": 0, "deleted": 0, "unchanged": 0}
+    """Make the calendar mirror `meetings`. Returns counts.
+
+    Creates missing events, updates changed ones, removes duplicates of the same meeting, and deletes
+    upcoming events that disappeared from the page. Past events are never created twice or deleted.
+    """
+    counts = {"created": 0, "updated": 0, "deleted": 0, "deduped": 0, "unchanged": 0}
+    if not meetings:
+        return counts
+    now = datetime.now(timezone.utc)
+    since = min(m.start for m in meetings).replace(tzinfo=ZoneInfo(TZ)) - timedelta(days=1)
+    existing = _existing_events(service, cal_id, since)
     wanted = {_key(m): m for m in meetings}
+
+    def delete(ev, reason):
+        log.info("%s %s  %s", reason, ev["start"].get("dateTime"), ev.get("summary"))
+        if not dry_run:
+            service.events().delete(calendarId=cal_id, eventId=ev["id"]).execute()
+
     for k, m in wanted.items():
-        ev = existing.get(k)
-        if ev is None:
+        evs = existing.get(k, [])
+        for dup in evs[1:]:  # keep the oldest copy
+            delete(dup, "DEDUPE")
+            counts["deduped"] += 1
+        if not evs:
             log.info("CREATE %s  %s", m.start, m.title)
             if not dry_run:
                 service.events().insert(calendarId=cal_id, body=_body(m)).execute()
             counts["created"] += 1
-        elif ev["extendedProperties"]["private"].get("cb3_hash") != _hash(m):
+        elif evs[0]["extendedProperties"]["private"].get("cb3_hash") != _hash(m):
             log.info("UPDATE %s  %s", m.start, m.title)
             if not dry_run:
-                service.events().update(calendarId=cal_id, eventId=ev["id"], body=_body(m)).execute()
+                service.events().update(calendarId=cal_id, eventId=evs[0]["id"], body=_body(m)).execute()
             counts["updated"] += 1
         else:
             counts["unchanged"] += 1
-    for k, ev in existing.items():
+    for k, evs in existing.items():
         if k not in wanted:
-            log.info("DELETE %s  %s", ev["start"].get("dateTime"), ev.get("summary"))
-            if not dry_run:
-                service.events().delete(calendarId=cal_id, eventId=ev["id"]).execute()
-            counts["deleted"] += 1
+            for ev in evs:
+                if not _has_ended(ev, now):  # never delete past events
+                    delete(ev, "DELETE")
+                    counts["deleted"] += 1
     return counts
